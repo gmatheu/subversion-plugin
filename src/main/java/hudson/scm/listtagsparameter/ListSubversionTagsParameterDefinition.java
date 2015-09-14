@@ -29,25 +29,10 @@ import com.cloudbees.plugins.credentials.common.StandardListBoxModel;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import hudson.Extension;
 import hudson.Util;
-import hudson.model.AbstractProject;
-import hudson.model.Hudson;
-import hudson.model.Item;
-import hudson.model.Job;
-import hudson.model.ParameterDefinition;
-import hudson.model.ParameterValue;
-import hudson.model.ParametersDefinitionProperty;
+import hudson.model.*;
 import hudson.scm.CredentialsSVNAuthenticationProviderImpl;
 import hudson.scm.SubversionSCM;
 import hudson.util.FormValidation;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
@@ -67,6 +52,17 @@ import org.tmatesoft.svn.core.io.SVNRepository;
 import org.tmatesoft.svn.core.io.SVNRepositoryFactory;
 import org.tmatesoft.svn.core.wc.SVNLogClient;
 import org.tmatesoft.svn.core.wc.SVNRevision;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Defines a new {@link ParameterDefinition} to be displayed at the top of the
@@ -95,7 +91,9 @@ public class ListSubversionTagsParameterDefinition extends ParameterDefinition {
   private static final String SVN_BRANCHES = "branches";
   private static final String SVN_TAGS = "tags";
   private static final String SVN_TRUNK = "trunk";
-  
+  //  private static final String SVN_RELEASES = "releases";
+  private static List<String> folders = Arrays.asList(SVN_BRANCHES, "releases", SVN_TAGS);
+
   @Deprecated
   public ListSubversionTagsParameterDefinition(String name, String tagsDir, String tagsFilter, String defaultValue, String maxTags, boolean reverseByDate, boolean reverseByName, String uuid) {
     this(name, tagsDir, null, tagsFilter, defaultValue, maxTags, reverseByDate, reverseByName);
@@ -247,7 +245,9 @@ public class ListSubversionTagsParameterDefinition extends ParameterDefinition {
    */
   private boolean isSVNRepositoryProjectRoot(SVNRepository repo) {
     try {
-      if (repo.info(SVN_TRUNK, SVNRevision.HEAD.getNumber()) != null && repo.info(SVN_BRANCHES, SVNRevision.HEAD.getNumber()) != null && repo.info(SVN_TAGS, SVNRevision.HEAD.getNumber()) != null) {
+      if (repo.info(SVN_TRUNK, SVNRevision.HEAD.getNumber()) != null
+              && repo.info(SVN_BRANCHES, SVNRevision.HEAD.getNumber()) != null
+              && repo.info(SVN_TAGS, SVNRevision.HEAD.getNumber()) != null) {
         return true;
       }
     } catch (SVNException e) {
@@ -292,27 +292,14 @@ public class ListSubversionTagsParameterDefinition extends ParameterDefinition {
    * @throws SVNException
    */
   private List<String> getSVNRootRepoDirectories(SVNLogClient logClient, SVNURL repoURL) throws SVNException {
-    // Get the branches repository contents
-    SVNURL branchesRepo = repoURL.appendPath(SVN_BRANCHES, true);
-    SimpleSVNDirEntryHandler branchesEntryHandler = new SimpleSVNDirEntryHandler(null);
-    logClient.doList(branchesRepo, SVNRevision.HEAD, SVNRevision.HEAD, false, SVNDepth.IMMEDIATES, SVNDirEntry.DIRENT_ALL, branchesEntryHandler);
-    List<String> branches = branchesEntryHandler.getDirs(isReverseByDate(), isReverseByName());
-    branches.remove("");
-    appendTargetDir(SVN_BRANCHES, branches);
-
-    // Get the tags repository contents
-    SVNURL tagsRepo = repoURL.appendPath(SVN_TAGS, true);
-    SimpleSVNDirEntryHandler tagsEntryHandler = new SimpleSVNDirEntryHandler(null);
-    logClient.doList(tagsRepo, SVNRevision.HEAD, SVNRevision.HEAD, false, SVNDepth.IMMEDIATES, SVNDirEntry.DIRENT_ALL, tagsEntryHandler);
-    List<String> tags = tagsEntryHandler.getDirs(isReverseByDate(), isReverseByName());
-    tags.remove("");
-    appendTargetDir(SVN_TAGS, tags);
-
     // Merge trunk with the contents of branches and tags.
     List<String> dirs = new ArrayList<String>();
     dirs.add(SVN_TRUNK);
-    dirs.addAll(branches);
-    dirs.addAll(tags);
+    for(String folder : folders) {
+      List<String> items = fetchItemsFromFolder(logClient, repoURL, folder);
+      dirs.addAll(items);
+    }
+
 
     // Filter out any unwanted repository locations.
     if (StringUtils.isNotBlank(tagsFilter) && dirs.size() > 0) {
@@ -328,8 +315,18 @@ public class ListSubversionTagsParameterDefinition extends ParameterDefinition {
     }
 
     return dirs;
-  }     
-  
+  }
+
+  private List<String> fetchItemsFromFolder(SVNLogClient logClient, SVNURL repoURL, String folder) throws SVNException {
+    SimpleSVNDirEntryHandler entryHandler = new SimpleSVNDirEntryHandler(null);
+    SVNURL folderRepo = repoURL.appendPath(folder, true);
+    logClient.doList(folderRepo, SVNRevision.HEAD, SVNRevision.HEAD, false, SVNDepth.IMMEDIATES, SVNDirEntry.DIRENT_ALL, entryHandler);
+    List<String> items = entryHandler.getDirs(isReverseByDate(), isReverseByName());
+    items.remove("");
+    appendTargetDir(folder, items);
+    return items;
+  }
+
   /**
    * Removes the parent directory (that is, the tags directory) from a list of
    * directories.
